@@ -1,4 +1,4 @@
-module intel/isecl/tools/aas-manager
+module intel/isecl/tools/populate-users
 
 go 1.12
 

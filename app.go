@@ -16,6 +16,20 @@ import (
 	"github.com/joho/godotenv"
 )
 
+const (
+	HELP_NOSETUP = "Don't add users, roles and user-roles to the Authentication Service"
+	HELP_ANSWERFILE = `Answer file constaining user input`
+	HELP_USE_JSON = "Use Json file as input instead of parsing env file"
+	HELP_IN_JSON_FILE = "Input Json file name - identical to use_json flag but can specify a different file name "
+	HELP_OUT_JSON_FILE = "Output json file name - identical to output_json flag but can specify a different file name"
+	HELP_OUTPUT_JSON = "Boolean value to indicate if the users and roles should be written to a output file"
+	HELP_GENPASSWORD = "Generate passwords if not specified"
+	HELP_REGEN_TOKEN_ONLY = "Generate token only"
+	HELP_HELP = "Show Usage - if specified, all other options will be ignored"
+
+	PASSWORD_SIZE = 20
+)
+
 type UserAndRolesCreate struct {
 	aas.UserCreate                  //embed
 	PrintBearerToken	bool `json:"print_bearer_token"`
@@ -60,6 +74,8 @@ type App struct {
 	WlaServiceUserPassword string
 
 	Components map[string]bool
+	GenPassword bool
+	RegenTokenOnly bool
 
 	ConsoleWriter io.Writer
 }
@@ -92,7 +108,7 @@ func MakeTlsCertificateRole(cn, san string) aas.RoleCreate {
 	r := aas.RoleCreate{}
 	r.Service = "CMS"
 	r.Name = "CertApprover"
-	r.Context = "CN=" + cn + ";SAN=" + san + "certType=TLS"
+	r.Context = "CN=" + cn + ";SAN=" + san + ";certType=TLS"
 	return r
 }
 
@@ -139,7 +155,9 @@ func (a* App) GetServiceUsers() []UserAndRolesCreate {
 			urc.Roles = append(urc.Roles, NewRole("WLS", "FlavorsImageRetrieval", "",nil))
 			urc.Roles = append(urc.Roles, NewRole("WLS", "ReportsCreate", "",nil))
 		}
-		urs = append(urs, urc)
+		if urc.Name != "" {
+			urs = append(urs, urc)
+		}
 
 	}
 	return urs
@@ -153,10 +171,6 @@ func (a *App) GetSuperInstallUser() UserAndRolesCreate {
 	urc.Name = a.InstallAdminUserName
 	urc.Password = a.InstallAdminPassword
 	urc.PrintBearerToken = true
-	if urc.Password == "" {
-		urc.Password = RandomString(20)
-	}
-
 	urc.Roles = []aas.RoleCreate{}
 
 	// set the roles depending on the components that are to be installed
@@ -168,7 +182,7 @@ func (a *App) GetSuperInstallUser() UserAndRolesCreate {
 			urc.Roles = append(urc.Roles, MakeTlsCertificateRole(a.VsCN, a.VsSanList))
 			urc.Roles = append(urc.Roles, NewRole("CMS", "CertApprover", "CN=mtwilson-saml;certType=Signing", nil))
 		case "TA":
-			urc.Roles = append(urc.Roles, NewRole("VS", "AttestationRegister", "CN=mtwilson-saml;certType=Signing",
+			urc.Roles = append(urc.Roles, NewRole("VS", "AttestationRegister", "",
 						[]string{"host_tls_policies:create:*","hosts:create:*","hosts:store:*","hosts:search:*",
 						"host_unique_flavors:create:*","flavors:search:*", "tpm_passwords:retrieve:*",
 						"tpm_passwords:create:*", "host_aiks:certify:*"}))
@@ -238,7 +252,7 @@ func (a *App) LoadAllVariables(envFile string) error {
 		{&a.AasAdminUserName, "AAS_ADMIN_USERNAME", "", "AAS ADMIN USERNAME", true, false},
 		{&a.AasAdminPassword, "AAS_ADMIN_PASSWORD", "", "AAS ADMIN PASSWORD", true, true},
 
-		{&installComps, "ISECL_INSTALLED_COMPONENTS", "", "ISecl Components to be installed", true, true},
+		{&installComps, "ISECL_INSTALL_COMPONENTS", "", "ISecl Components to be installed", true, true},
 
 		{&a.InstallAdminUserName, "INSTALL_ADMIN_USERNAME", "installadmin", "AAS ADMIN USERNAME", false, false},
 		{&a.InstallAdminPassword, "INSTALL_ADMIN_PASSWORD", "", "AAS ADMIN PASSWORD", false, true},
@@ -314,14 +328,21 @@ func (a *App) LoadUserAndRolesJson(file string) (*AasUsersAndRolesSetup, error) 
 	return &urc, nil
 }
 
-func (a* App) GetNewOrExistingUserID(name, password string, aascl *claas.Client) (string, error) {
+func (a* App) GetNewOrExistingUserID(name, password string, forceUpdatePassword bool, aascl *claas.Client) (string, error) {
 	
 	users, err := aascl.GetUsers(name)
 	if err != nil {
 		return "", err
 	}
+	
+
 	if len(users) == 0 {
 		// did not find the user.. so let us create the user.
+		
+		// first check if the password is blank. If it is and we have to create a password
+		if password == "" {
+				return "", fmt.Errorf("User %s password not supplied and no flag to generate password. Use --genpassword flag to generate password")
+		}
 		newUser, err := aascl.CreateUser(aas.UserCreate{name, password})
 		if err != nil {
 			return "", err
@@ -330,6 +351,13 @@ func (a* App) GetNewOrExistingUserID(name, password string, aascl *claas.Client)
 	}
 	if len(users) == 1 && users[0].Name == name {
 		// found single record that corresponds to the user. 
+
+		// if password is empty and we have to generate password, generate password and set it
+		if forceUpdatePassword  {
+			if err := aascl.UpdateUser(users[0].ID, aas.UserCreate{name,password}); err != nil {
+				return "", fmt.Errorf("Could not update the user : %s's password", name)
+			}
+		}
 		return users[0].ID, nil
 	}
 	// we should not really be here.. we have multiple users with matched name
@@ -361,45 +389,85 @@ func (a* App) GetNewOrExistingRoleID(role aas.RoleCreate, aascl *claas.Client) (
 }
 
 
-func (a* App) AddUsersAndRoles(asr * AasUsersAndRolesSetup) error {
 
+func (a* App) GetUserToken(apiUrl, apiUserName, apiUserPass string) ([]byte, error){
 	// first create a JWT token for the admin
-	jwtcl := claas.NewJWTClient(asr.AasApiUrl)
+	jwtcl := claas.NewJWTClient(apiUrl)
 	jwtcl.HTTPClient = clients.HTTPClientTLSNoVerify()
 
-	jwtcl.AddUser(asr.AasAdminUserName, asr.AasAdminPassword)
+	jwtcl.AddUser(apiUserName, apiUserPass)
 	err := jwtcl.FetchAllTokens()
 	if err != nil {
-		fmt.Println("err: ", err.Error())
+		return nil, fmt.Errorf("Could not Fetch Token for for user: %s - error: %v", apiUserName, err)
 	}
 	
-	token, err := jwtcl.GetUserToken(asr.AasAdminUserName)
+	token, err := jwtcl.GetUserToken(apiUserName)
 	if err != nil {
-		return fmt.Errorf("Could not obtain token for %s from %s - err - %s", asr.AasAdminUserName, asr.AasApiUrl, err)
+		return nil, fmt.Errorf("Could not obtain token for %s from %s - err - %s", apiUserName, apiUrl, err)
 
 	}
 
-	aascl := claas.Client{asr.AasApiUrl, token, clients.HTTPClientTLSNoVerify()} 
-	// no create an aas client with the token. 
+	return token, nil 
+}
 
+func (a* App) PrintUserTokens(asr * AasUsersAndRolesSetup) error {
+
+	for _, user := range asr.UsersAndRoles {
+		if !user.PrintBearerToken {
+			continue
+		}
+		token, err := a.GetUserToken(asr.AasApiUrl, user.Name, user.Password)
+		if err != nil {
+			return err
+		}
+		fmt.Println("\nToken for User:", user.Name)
+		fmt.Println("BEARER_TOKEN=",string(token))
+		fmt.Println()
+	}
+	return nil
+
+}
+
+func (a* App) AddUsersAndRoles(asr * AasUsersAndRolesSetup) error {
+
+	// no create an aas client with the token. 
+	
+	token, err := a.GetUserToken(asr.AasApiUrl, asr.AasAdminUserName, asr.AasAdminPassword)
+	if err != nil {
+		return err
+	}
+	aascl := &claas.Client{asr.AasApiUrl, token, clients.HTTPClientTLSNoVerify()}
 
 	//fmt.Println("BEARER_TOKEN="+string(token))
-	for _, user := range asr.UsersAndRoles {
+	for idx, _ := range asr.UsersAndRoles {
 		userid := ""
-		if userid, err = a.GetNewOrExistingUserID(user.Name, user.Password, &aascl); err == nil {
-			fmt.Println("user:", user.Name, "userid:", userid)
+		if a.RegenTokenOnly && !asr.UsersAndRoles[idx].PrintBearerToken {
+			continue
+		}
+		
+		forcePasswordUpdate := false
+		if (asr.UsersAndRoles[idx].Password == "" && a.GenPassword || asr.UsersAndRoles[idx].PrintBearerToken){
+			asr.UsersAndRoles[idx].Password = RandomString(PASSWORD_SIZE)
+			forcePasswordUpdate = true
+		}
+		if userid, err = a.GetNewOrExistingUserID(asr.UsersAndRoles[idx].Name, asr.UsersAndRoles[idx].Password, forcePasswordUpdate, aascl); err == nil {
+			fmt.Println("\nuser:", asr.UsersAndRoles[idx].Name, "userid:", userid)
 		} else {
-			return fmt.Errorf("Error while attempting to create/ retrieve user %s - error %v ", user.Name, err)
+			return fmt.Errorf("Error while attempting to create/ retrieve user %s - error %v ", asr.UsersAndRoles[idx].Name, err)
 			
+		}
+		if a.RegenTokenOnly{
+			continue
 		}
 		// we might have the same role appear more than one in the list of roles to be added for a user
 		// since different components might need the same roles. The Add user to role function relies on 
 		// having a unique list of roles. put the roleids into a map and then make a list. 
 
+		fmt.Println("\nGetting Roles for user")
 		roleMap := make(map[string]bool)
-		for _, role := range user.Roles {
-			if roleid, err := a.GetNewOrExistingRoleID(role, &aascl); err == nil {
-				fmt.Println("role:", role, "userid:", roleid)
+		for _, role := range asr.UsersAndRoles[idx].Roles {
+			if roleid, err := a.GetNewOrExistingRoleID(role, aascl); err == nil {
+				fmt.Println("role:", role, "roleid:", roleid)
 				roleMap[roleid] = true
 			} else {
 				return fmt.Errorf("Error while attempting to create/ retrieve role %s - error %v ", role.Name, err)
@@ -411,9 +479,9 @@ func (a* App) AddUsersAndRoles(asr * AasUsersAndRolesSetup) error {
 			roleList = append(roleList, key)
 		}
 
-		fmt.Println("Roles to added :", roleList)
+		fmt.Println("\nAdding Roles to user RolesIDs :",  roleList)
 		if err = aascl.AddRoleToUser(userid, aas.RoleIDs{roleList}); err != nil {
-			return fmt.Errorf("Could not add roles to user - %s", user.Name)
+			return fmt.Errorf("Could not add roles to user - %s", asr.UsersAndRoles[idx].Name)
 		}
 
 		
@@ -422,45 +490,55 @@ func (a* App) AddUsersAndRoles(asr * AasUsersAndRolesSetup) error {
 
 }
 
+
 func (a *App) Setup(args []string) error {
 	var err error
 	setup := true
-	var noSetup, useJson, outputJson bool
-	var envFile, jsonInput, jsonOutput string
-	var flags []string
+	var noSetup, useJson, outputJson, printHelp bool
+	var envFile, jsonIn, jsonOut string
 
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
-	fs.BoolVar(&noSetup, "nosetup", false, "Don't run the setup")
-	fs.StringVar(&envFile, "envfile", "./usermanager.env", "Environment file for user manager input")
-	fs.BoolVar(&useJson, "use_json", false, "Use Json file instead of parsing env file")
-	fs.StringVar(&jsonInput, "in_json_file", "", "Input Json file - will use this file to create ")
-	fs.StringVar(&jsonOutput, "out_json_file", "./aas_users_n_roles.json", "Output json file")
-	fs.BoolVar(&outputJson, "output_json", false, "Write user and roles to json file")
+	fs.BoolVar(&noSetup, "nosetup", false, HELP_NOSETUP)
+	fs.StringVar(&envFile, "answerfile", "populate-users.env", HELP_ANSWERFILE)
+	fs.BoolVar(&useJson, "use_json", false, HELP_USE_JSON)
+	fs.StringVar(&jsonIn, "in_json_file", "", HELP_IN_JSON_FILE)
+	fs.StringVar(&jsonOut, "out_json_file", "", HELP_OUT_JSON_FILE)
+	fs.BoolVar(&outputJson, "output_json", false, HELP_OUTPUT_JSON)
+	fs.BoolVar(&a.GenPassword, "genpassword", false, HELP_GENPASSWORD)
+	fs.BoolVar(&a.RegenTokenOnly, "regen_token_only", false, HELP_REGEN_TOKEN_ONLY)
+	fs.BoolVar(&printHelp, "help", false, HELP_HELP)
 
-	err = fs.Parse(flags)
+	err = fs.Parse(args[1:])
 	if err != nil {
 		// return err
-		return fmt.Errorf("cold not parse the flags")
+		return fmt.Errorf("could not parse the command line flags")
+	}
+
+	if printHelp || (len(args) == 2 && args[1] == "help") {
+		fmt.Println("Usage:\n\n ",args[0], "[--answerfile] [--nosetup] [--genpassword] [--use_json] [--in_json_file] [--output_json] [--out_json_file] [--help]\n" )
+		
+		fs.PrintDefaults()
+		return nil
 	}
 
 	var as *AasUsersAndRolesSetup
 
-	if useJson || jsonInput != "" {
+	if useJson || jsonIn != "" {
 		// do what is needed to parse the JSON file to create user and roles
-		if jsonInput == "" {
-			jsonInput = "./aas_users_n_roles.json"
+		if jsonIn == "" {
+			jsonIn = "./populate-users.json"
 		}
-		if as, err = a.LoadUserAndRolesJson(jsonInput); err != nil {
+		if as, err = a.LoadUserAndRolesJson(jsonIn); err != nil {
 			fmt.Println(err)
 			return err
 		}
 
 	} else {
 		// call the method to load all the environment variable values
-		fmt.Println("Loading environment variables")
+		fmt.Println("\n\nLoading environment variables\n=============================\n")
+
 		if err := a.LoadAllVariables(envFile); err != nil {
-			fmt.Println("Could not find necessary environemnt variables - err ", err)
-			return fmt.Errorf("Could not complete Setup. Exiting")
+			return fmt.Errorf("Could not find necessary environment variables - error %v ", err)
 		}
 		as = &AasUsersAndRolesSetup{AasApiUrl: a.AasAPIUrl, AasAdminUserName: a.AasAdminUserName, AasAdminPassword: a.AasAdminPassword}
 		as.UsersAndRoles = append(as.UsersAndRoles, a.GetSuperInstallUser())
@@ -474,30 +552,42 @@ func (a *App) Setup(args []string) error {
 	}
 
 	if setup {
-		fmt.Println("Calling the Setup method")
+		if (!a.RegenTokenOnly){
+			fmt.Println("\n\nAdding Users and Roles\n======================\n")
+		}	
 		if err = a.AddUsersAndRoles(as); err != nil {
 			return err
 		}
+		fmt.Println("\n\nPrinting Tokens for specific users\n==================================\n")
+		if err = a.PrintUserTokens(as); err != nil {
+			return err
+		}
+
+	}
+
+
+	if outputJson || jsonOut != "" {
+		if jsonOut == "" {
+			jsonOut = "./populate-users.json"
+		}
+		fmt.Println("\n\nWrting Output to json file - ", jsonOut)
+		outFile, err := os.OpenFile(jsonOut, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0)
+		if err != nil {
+			fmt.Errorf("could not open output json file - %s for writing", jsonOut)
+		}
+		defer outFile.Close()
+		enc := json.NewEncoder(outFile)
+		enc.SetIndent("","    ")
+		enc.Encode(as)
 	}
 	return nil
 
 }
 func (a *App) Run(args []string) error {
 
-	if len(args) < 2 {
-		a.printUsage()
-		os.Exit(1)
-	}
-
-	cmd := args[1]
-	switch cmd {
-	default:
-		a.printUsage()
-	case "setup":
-		if err := a.Setup(args[2:]); err != nil {
-			fmt.Println("setup not completed successfully. error -", err )
-			return err
-		}
+	if err := a.Setup(args); err != nil {
+		fmt.Println("Exit with Error!! - Setup not completed successfully. error -", err )
+		return err
 	}
 
 	return nil
