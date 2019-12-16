@@ -450,7 +450,7 @@ func (a *App) PrintUserTokens(asr *AasUsersAndRolesSetup) error {
 			return err
 		}
 		fmt.Println("\nToken for User:", user.Name)
-		fmt.Println("BEARER_TOKEN=", string(token))
+		fmt.Printf("BEARER_TOKEN=%s\n", string(token))
 		fmt.Println()
 	}
 	return nil
