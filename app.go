@@ -149,7 +149,7 @@ func (a *App) GetServiceUsers() []UserAndRolesCreate {
 		case "WLS":
 			urc.Name = a.WlsServiceUserName
 			urc.Password = a.WlsServiceUserPassword
-			urc.Roles = append(urc.Roles, NewRole("KMS", "ReportCreater", "", []string{"reports:create:*"}))
+			urc.Roles = append(urc.Roles, NewRole("VS", "ReportCreater", "", []string{"reports:create:*"}))
 		case "WLA":
 			urc.Name = a.WlaServiceUserName
 			urc.Password = a.WlaServiceUserPassword
@@ -185,8 +185,8 @@ func (a *App) GetGlobalAdminUser() *UserAndRolesCreate {
 			urc.Roles = append(urc.Roles, NewRole("TA", "Administrator", "", []string{"*:*:*"}))
 		case "AH":
 			urc.Roles = append(urc.Roles, NewRole("AH", "Administrator", "", []string{"*:*:*"}))
-		case "KMS":
-			urc.Roles = append(urc.Roles, NewRole("KMS", "KeyCRUD", "", []string{"*:*:*"}))
+		case "KBS":
+			urc.Roles = append(urc.Roles, NewRole("KBS", "KeyCRUD", "", []string{"*:*:*"}))
 		case "WLS":
 			urc.Roles = append(urc.Roles, NewRole("WLS", "Administrator", "", []string{"*:*:*"}))
 		}
@@ -260,7 +260,7 @@ func SetVariable(variable *string, envVarName string, defaultVal string, desc st
 
 func (a *App) LoadAllVariables(envFile string) error {
 	if err := godotenv.Load(envFile); err != nil {
-		fmt.Println("could not load environment file :", envFile, ". Will be using existing exported environement variables")
+		fmt.Println("could not load environment file :", envFile, ". Will be using existing exported environment variables")
 	}
 
 	// mandatory variables
@@ -295,8 +295,8 @@ func (a *App) LoadAllVariables(envFile string) error {
 		{&a.WlsCN, "WLS_CERT_COMMON_NAME", "WLS TLS Certificate", "Workload Service TLS Certificate Common Name", false, false},
 		{&a.WlsSanList, "WLS_CERT_SAN_LIST", "", "Workload Service TLS Certificate SAN LIST", false, false},
 
-		{&a.KmsCN, "KMS_CERT_COMMON_NAME", "KMS TLS Certificate", "Key Broker Service TLS Certificate Common Name", false, false},
-		{&a.KmsSanList, "KMS_CERT_SAN_LIST", "", "Key Broker Service TLS Certificate SAN LIST", false, false},
+		{&a.KmsCN, "KBS_CERT_COMMON_NAME", "KMS TLS Certificate", "Key Broker Service TLS Certificate Common Name", false, false},
+		{&a.KmsSanList, "KBS_CERT_SAN_LIST", "", "Key Broker Service TLS Certificate SAN LIST", false, false},
 
 		{&a.TaCN, "TA_CERT_COMMON_NAME", "Trust Agent TLS Certificate", "Trust Agent TLS Certificate Common Name", false, false},
 		{&a.TaSanList, "TA_CERT_SAN_LIST", "", "Trust Agent TLS Certificate SAN LIST", false, false},
