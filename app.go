@@ -145,7 +145,7 @@ func (a *App) GetServiceUsers() []UserAndRolesCreate {
 		case "WPM":
 			urc.Name = a.WpmServiceUserName
 			urc.Password = a.WpmServiceUserPassword
-			urc.Roles = append(urc.Roles, NewRole("VS", "KeyManager", "", []string{"keys:create:*", "keys:transfer:*"}))
+			urc.Roles = append(urc.Roles, NewRole("KMS", "KeyManager", "", []string{"keys:create:*", "keys:transfer:*"}))
 		case "WLS":
 			urc.Name = a.WlsServiceUserName
 			urc.Password = a.WlsServiceUserPassword
@@ -186,9 +186,13 @@ func (a *App) GetGlobalAdminUser() *UserAndRolesCreate {
 		case "AH":
 			urc.Roles = append(urc.Roles, NewRole("AH", "Administrator", "", []string{"*:*:*"}))
 		case "KBS":
-			urc.Roles = append(urc.Roles, NewRole("KBS", "KeyCRUD", "", []string{"*:*:*"}))
+			urc.Roles = append(urc.Roles, NewRole("KMS", "KeyCRUD", "", []string{"*:*:*"}))
 		case "WLS":
 			urc.Roles = append(urc.Roles, NewRole("WLS", "Administrator", "", []string{"*:*:*"}))
+		case "AAS":
+			urc.Roles = append(urc.Roles, NewRole("AAS", "UserManager", "", nil))
+			urc.Roles = append(urc.Roles, NewRole("AAS", "RoleManager", "", nil))
+			urc.Roles = append(urc.Roles, NewRole("AAS", "UserRoleManager", "", nil))
 		}
 	}
 	return &urc
@@ -222,8 +226,6 @@ func (a *App) GetSuperInstallUser() UserAndRolesCreate {
 			urc.Roles = append(urc.Roles, NewRole("VS", "CaCertRetriever", "", []string{"*:*:*"}))
 		case "KBS":
 			urc.Roles = append(urc.Roles, MakeTlsCertificateRole(a.KmsCN, a.KmsSanList))
-			urc.Roles = append(urc.Roles, NewRole("VS", "CaCertRetriever", "", []string{"*:*:*"}))
-
 		case "WPM":
 			urc.Roles = append(urc.Roles, NewRole("CMS", "CertApprover", "CN=WPM Flavor Signing Certificate;certType=Signing", nil))
 		case "WLS":
