@@ -318,8 +318,8 @@ func (a *App) LoadAllVariables(envFile string) error {
 		{&a.WlsServiceUserName, "WLS_SERVICE_USERNAME", "", "Workload Service User Name", false, false},
 		{&a.WlsServiceUserPassword, "WLS_SERVICE_PASSWORD", "", "Workload Service User Password", false, true},
 
-		{&a.WlaServiceUserName, "WLA_SERVICE_USERNAME", "", "Workload Service User Name", false, false},
-		{&a.WlaServiceUserPassword, "WLA_SERVICE_PASSWORD", "", "Workload Service User Password", false, true},
+		{&a.WlaServiceUserName, "WLA_SERVICE_USERNAME", "", "Workload Agent User Name", false, false},
+		{&a.WlaServiceUserPassword, "WLA_SERVICE_PASSWORD", "", "Workload Agent User Password", false, true},
 	}
 
 	hasError := false
