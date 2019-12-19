@@ -310,7 +310,7 @@ func (a *App) LoadAllVariables(envFile string) error {
 		{&a.VsServiceUserPassword, "VS_SERVICE_PASSWORD", "", "Verification Service User Password", false, true},
 
 		{&a.AhServiceUserName, "AH_SERVICE_USERNAME", "", "Attestation Hub Service User Name", false, false},
-		{&a.AhServiceUserPassword, "VS_SERVICE_PASSWORD", "", "Attestation Hub Service User Password", false, true},
+		{&a.AhServiceUserPassword, "AH_SERVICE_PASSWORD", "", "Attestation Hub Service User Password", false, true},
 
 		{&a.WpmServiceUserName, "WPM_SERVICE_USERNAME", "", "Workload Policy Manager Hub Service User Name", false, false},
 		{&a.WpmServiceUserPassword, "WPM_SERVICE_PASSWORD", "", "Workload Policy Manager Service User Password", false, true},
